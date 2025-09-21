@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+python-dotenv
+langchain-ollama
+langchain-tavily
+langgraph
+pydantic

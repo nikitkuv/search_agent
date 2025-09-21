@@ -27,7 +27,8 @@ class SearchAgent:
     ):
         self.llm = ChatOllama(
             model=model_name,
-            temperature=temperature
+            temperature=temperature,
+            base_url="http://host.docker.internal:11434"
         )
         self.tool = TavilySearch(max_results=max_results, api_key=Settings.TAVILY_API_KEY)
         self.llm_with_tools = self.llm.bind_tools([self.tool])
