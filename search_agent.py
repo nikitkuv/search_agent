@@ -9,6 +9,7 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langchain_core.messages import ToolMessage, AIMessage, HumanMessage
 from langgraph.prebuilt import ToolNode, tools_condition
+from langgraph.store.postgres import PostgresStore
 
 from settings import Settings
 
@@ -23,7 +24,8 @@ class SearchAgent:
         self, 
         model_name: str = Settings.model_name, 
         temperature: float = Settings.temperature,
-        max_results: int = Settings.max_results
+        max_results: int = Settings.max_results,
+        database_url: str = Settings.db_url
     ):
         self.llm = ChatOllama(
             model=model_name,
@@ -32,6 +34,10 @@ class SearchAgent:
         )
         self.tool = TavilySearch(max_results=max_results, api_key=Settings.TAVILY_API_KEY)
         self.llm_with_tools = self.llm.bind_tools([self.tool])
+        
+        self.store = PostgresStore.from_conn_string(database_url)
+        self.store.setup()
+        
         self.graph = self._create_compile_graph()
 
 
@@ -70,8 +76,36 @@ class SearchAgent:
         return serialized
 
     
-    async def run(self, query: str) -> List[Dict[str, Any]]:
-        initial_state = {"messages": [HumanMessage(content=query)]}
+    async def run(
+        self, 
+        query: str,
+        thread_id: str = "default"
+    ) -> List[Dict[str, Any]]:
+
+        namespace = ("conversation", thread_id)
+        stored_item = await self.store.aget(namespace)
+
+        if stored_item and stored_item.value:
+            initial_messages = stored_item.value.get("messages", [])
+        else:
+            initial_messages = []
+        
+        initial_messages.append(HumanMessage(content=query))
+        initial_state = {"messages": initial_messages}
+        
         final_state = await self.graph.ainvoke(initial_state)
+
+        await self.store.aput(namespace, final_state)
         
         return self._serialize(final_state)
+
+    
+    async def get_conversation(self, thread_id: str = "default") -> List[Dict[str, Any]]:
+
+        namespace = ("conversation", thread_id)
+        stored_item = await self.store.aget(namespace)
+        
+        if not stored_item or not stored_item.value:
+            return []
+        
+        return self._serialize(stored_item.value)
