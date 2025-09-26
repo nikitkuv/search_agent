@@ -4,6 +4,8 @@
 # Игнорирование виртуальных окружений Python
 venv/
 .venv/
+.venv_agent
+venv_agent/
 env/
 ENV/
 .env
@@ -42,3 +44,5 @@ Thumbs.db
 # Игнорирование специфичных для ОС файлов
 *.bak
 *~
+
+test.py
