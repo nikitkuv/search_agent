@@ -5,5 +5,5 @@ langchain-ollama
 langchain-tavily
 langgraph
 pydantic
-langgraph[postgres]
-psycopg2-binary
+psycopg[binary]
+langgraph-checkpoint-postgres

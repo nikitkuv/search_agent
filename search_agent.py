@@ -10,6 +10,7 @@ from langgraph.graph.message import add_messages
 from langchain_core.messages import ToolMessage, AIMessage, HumanMessage
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.store.postgres import PostgresStore
+import psycopg
 
 from settings import Settings
 
@@ -19,7 +20,6 @@ class State(TypedDict):
 
 
 class SearchAgent:
-
     def __init__(
         self, 
         model_name: str = Settings.model_name, 
@@ -34,10 +34,13 @@ class SearchAgent:
         )
         self.tool = TavilySearch(max_results=max_results, api_key=Settings.TAVILY_API_KEY)
         self.llm_with_tools = self.llm.bind_tools([self.tool])
-        
-        self.store = PostgresStore.from_conn_string(database_url)
+
+        self.database_url = database_url
+        conn = psycopg.connect(self.database_url)
+        conn.autocommit = True
+        self.store = PostgresStore(conn)
         self.store.setup()
-        
+
         self.graph = self._create_compile_graph()
 
 
@@ -56,7 +59,7 @@ class SearchAgent:
         graph.add_conditional_edges("llm", tools_condition)
         graph.add_edge("tools", "llm")
 
-        return graph.compile()
+        return graph.compile(store=self.store)
 
     
     def _serialize(self, final_state: State) -> List[Dict[str, Any]]:
@@ -83,7 +86,7 @@ class SearchAgent:
     ) -> List[Dict[str, Any]]:
 
         namespace = ("conversation", thread_id)
-        stored_item = await self.store.aget(namespace)
+        stored_item = self.store.get(namespace)
 
         if stored_item and stored_item.value:
             initial_messages = stored_item.value.get("messages", [])
@@ -95,17 +98,29 @@ class SearchAgent:
         
         final_state = await self.graph.ainvoke(initial_state)
 
-        await self.store.aput(namespace, final_state)
+        self.store.put(namespace, final_state)
         
         return self._serialize(final_state)
 
     
-    async def get_conversation(self, thread_id: str = "default") -> List[Dict[str, Any]]:
+    def get_conversation(self, thread_id: str = "default") -> List[Dict[str, Any]]:
 
         namespace = ("conversation", thread_id)
-        stored_item = await self.store.aget(namespace)
+        stored_item = self.store.get(namespace)
         
         if not stored_item or not stored_item.value:
             return []
         
         return self._serialize(stored_item.value)
+    
+
+    def list_conversations(self) -> List[str]:
+
+        results = []
+        for item in self.store.search(prefix=("conversation",)):
+
+            if len(item.namespace) == 2:
+                thread_id = item.namespace[1]
+                results.append(thread_id)
+
+        return results
