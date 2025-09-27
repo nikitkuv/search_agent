@@ -1,22 +1,21 @@
-import asyncio
-
 from typing import Annotated, List, Dict, Any
 from typing_extensions import TypedDict
+import psycopg
 
 from langchain_tavily import TavilySearch
 from langchain_ollama import ChatOllama
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
-from langchain_core.messages import ToolMessage, AIMessage, HumanMessage
+from langchain_core.messages import HumanMessage
 from langgraph.prebuilt import ToolNode, tools_condition
 from langgraph.store.postgres import PostgresStore
-import psycopg
+from langchain_core.messages import BaseMessage, messages_to_dict, messages_from_dict
 
 from settings import Settings
 
 
 class State(TypedDict):
-    messages: Annotated[list, add_messages]
+    messages: Annotated[list[BaseMessage], add_messages]
 
 
 class SearchAgent:
@@ -62,34 +61,16 @@ class SearchAgent:
         return graph.compile(store=self.store)
 
     
-    def _serialize(self, final_state: State) -> List[Dict[str, Any]]:
-        serialized = []
-        
-        for msg in final_state["messages"]:
-            msg_dict = {
-                "type": msg.__class__.__name__,
-                "content": getattr(msg, 'content', ''),
-            }
-            if hasattr(msg, 'tool_calls') and msg.tool_calls:
-                msg_dict["tool_calls"] = msg.tool_calls
-            if hasattr(msg, 'tool_call_id') and msg.tool_call_id:
-                msg_dict["tool_call_id"] = msg.tool_call_id
-            serialized.append(msg_dict)
-
-        return serialized
-
-    
     async def run(
         self, 
         query: str,
         thread_id: str = "default"
     ) -> List[Dict[str, Any]]:
-
         namespace = ("conversation", thread_id)
-        stored_item = self.store.get(namespace)
+        stored_item = self.store.get(namespace, "state")
 
         if stored_item and stored_item.value:
-            initial_messages = stored_item.value.get("messages", [])
+            initial_messages = messages_from_dict(stored_item.value["messages"])
         else:
             initial_messages = []
         
@@ -98,26 +79,24 @@ class SearchAgent:
         
         final_state = await self.graph.ainvoke(initial_state)
 
-        self.store.put(namespace, final_state)
+        self.store.put(namespace, "state", {"messages": messages_to_dict(final_state["messages"])})
         
-        return self._serialize(final_state)
+        return messages_to_dict(final_state["messages"])
 
     
     def get_conversation(self, thread_id: str = "default") -> List[Dict[str, Any]]:
-
         namespace = ("conversation", thread_id)
-        stored_item = self.store.get(namespace)
+        stored_item = self.store.get(namespace, "state")
         
         if not stored_item or not stored_item.value:
             return []
         
-        return self._serialize(stored_item.value)
+        return messages_to_dict(messages_from_dict(stored_item.value["messages"]))
     
 
     def list_conversations(self) -> List[str]:
-
         results = []
-        for item in self.store.search(prefix=("conversation",)):
+        for item in self.store.search("conversation"):
 
             if len(item.namespace) == 2:
                 thread_id = item.namespace[1]
