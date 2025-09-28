@@ -96,7 +96,7 @@ class SearchAgent:
 
     def list_conversations(self) -> List[str]:
         results = []
-        for item in self.store.search("conversation"):
+        for item in self.store.search(("conversation",)):
 
             if len(item.namespace) == 2:
                 thread_id = item.namespace[1]
